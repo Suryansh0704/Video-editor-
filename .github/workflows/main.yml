@@ -1,0 +1,65 @@
+name: 🎞️ Edit Final Video
+
+on:
+  workflow_dispatch:
+
+jobs:
+  edit-video:
+    name: Run Video Editor
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg
+
+      - name: 📦 Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests
+
+      - name: 🎞️ Run editor
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: python edit_video.py
+
+      - name: ✅ Verify output
+        run: |
+          if [ ! -f "final_video.mp4" ]; then
+            echo "❌ final_video.mp4 not created"
+            exit 1
+          fi
+          SIZE=$(wc -c < final_video.mp4)
+          echo "✅ final_video.mp4 ready (${SIZE} bytes)"
+          ffmpeg -i final_video.mp4 2>&1 | grep -E "Duration|Video|Audio" || true
+
+      - name: 📤 Upload final video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-video-${{ github.sha }}
+          path: final_video.mp4
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: 📊 Write job summary
+        if: success()
+        run: |
+          echo "## 🎞️ Final Video Ready" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Output | final_video.mp4 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Audio | Merged ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Color Grade | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Fades | In + Out ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "⬇️ Download from **Artifacts** above." >> $GITHUB_STEP_SUMMARY
