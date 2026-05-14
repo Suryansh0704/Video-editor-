@@ -2,12 +2,21 @@ name: 🎞️ Edit Final Video
 
 on:
   workflow_dispatch:
+    inputs:
+      audio_artifact_id:
+        description: 'Audio artifact ID from Audio-generator-'
+        required: true
+        type: string
+      video_artifact_id:
+        description: 'Video artifact ID from Video-generator-'
+        required: true
+        type: string
 
 jobs:
   edit-video:
     name: Run Video Editor
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: ⬇️ Checkout repository
@@ -21,8 +30,7 @@ jobs:
       - name: 📦 Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: 📦 Install Python dependencies
         run: |
@@ -31,7 +39,9 @@ jobs:
 
       - name: 🎞️ Run editor
         env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          PAT_TOKEN:         ${{ secrets.PAT_TOKEN }}
+          AUDIO_ARTIFACT_ID: ${{ github.event.inputs.audio_artifact_id }}
+          VIDEO_ARTIFACT_ID: ${{ github.event.inputs.video_artifact_id }}
         run: python edit_video.py
 
       - name: ✅ Verify output
@@ -58,8 +68,7 @@ jobs:
           echo "## 🎞️ Final Video Ready" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Audio ID | ${{ github.event.inputs.audio_artifact_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Video ID | ${{ github.event.inputs.video_artifact_id }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Output | final_video.mp4 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Audio | Merged ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Color Grade | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Fades | In + Out ✅ |" >> $GITHUB_STEP_SUMMARY
           echo "⬇️ Download from **Artifacts** above." >> $GITHUB_STEP_SUMMARY
