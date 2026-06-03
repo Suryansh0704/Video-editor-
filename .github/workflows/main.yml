@@ -37,9 +37,33 @@ jobs:
           pip install --upgrade pip
           pip install requests
 
+      - name: ⬇️ Download AUDIO artifact from Audio-generator-
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          AUDIO_ARTIFACT_ID: ${{ github.event.inputs.audio_artifact_id }}
+        run: |
+          curl -L -H "Authorization: Bearer $PAT_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/Suryansh0704/Audio-generator-/actions/artifacts/$AUDIO_ARTIFACT_ID/zip" \
+               -o audio.zip
+          unzip audio.zip -d audio/
+          ls -la audio/
+
+      - name: ⬇️ Download VIDEO artifact from Video-generator-
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          VIDEO_ARTIFACT_ID: ${{ github.event.inputs.video_artifact_id }}
+        run: |
+          curl -L -H "Authorization: Bearer $PAT_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/Suryansh0704/Video-generator-/actions/artifacts/$VIDEO_ARTIFACT_ID/zip" \
+               -o video.zip
+          unzip video.zip -d video/
+          ls -la video/
+
       - name: 🎞️ Run editor
         env:
-          PAT_TOKEN:         ${{ secrets.PAT_TOKEN }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           AUDIO_ARTIFACT_ID: ${{ github.event.inputs.audio_artifact_id }}
           VIDEO_ARTIFACT_ID: ${{ github.event.inputs.video_artifact_id }}
         run: python edit_video.py
