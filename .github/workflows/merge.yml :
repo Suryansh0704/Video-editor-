@@ -1,0 +1,35 @@
+name: Merge Voice + Video
+on:
+  repository_dispatch:
+    types: [merge-video]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        
+      - name: Download voice
+        run: |
+          curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+               "${{ github.event.client_payload.voice_download_url }}" -o voice.zip
+          unzip voice.zip -d voice/
+          
+      - name: Download video
+        run: |
+          curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+               "${{ github.event.client_payload.video_download_url }}" -o video.zip
+          unzip video.zip -d video/
+          
+      - name: Merge with FFmpeg
+        run: |
+          ffmpeg -i video/*.mp4 -i voice/*.mp3 -c:v copy -c:a aac -shortest output.mp4
+          
+      - name: Upload final video
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-video
+          path: output.mp4
