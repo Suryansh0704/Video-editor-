@@ -11,6 +11,9 @@ on:
         description: 'Video artifact ID from Video-generator-'
         required: true
         type: string
+  push:
+    paths:
+      - "optimization-config.json"
 
 jobs:
   edit-video:
@@ -36,6 +39,54 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install requests
+
+      - name: 🧬 Load optimization config
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          
+          OPT = {
+            "version": "default",
+            "cut_settings": {
+              "max_segment_duration": 3.0,
+              "transition_style": "hard_cut",
+              "zoom_on_impact": True,
+              "zoom_intensity": 1.2
+            },
+            "text_overlay": {
+              "duration_seconds": 2.5,
+              "highlight_keywords": ["secret", "truth", "never", "dark"],
+              "font_size": 72,
+              "font_color": "#FFFFFF",
+              "stroke_color": "#000000",
+              "stroke_width": 3
+            },
+            "danger_zones": [5, 15, 25, 35],
+            "danger_zone_effects": {
+              "5": "zoom_in",
+              "15": "text_flash",
+              "25": "sound_effect",
+              "35": "color_shift"
+            }
+          }
+          
+          try:
+            with open('optimization-config.json', 'r') as f:
+              loaded = json.load(f)
+              OPT.update(loaded)
+              print(f"✅ Using Gen {OPT['version']}")
+          except Exception as e:
+            print(f"⚠️ Using defaults: {e}")
+          
+          with open(os.environ.get('GITHUB_ENV', '/dev/null'), 'a') as env:
+            env.write(f"OPT_VERSION={OPT['version']}\n")
+            env.write(f"OPT_MAX_SEGMENT={OPT['cut_settings']['max_segment_duration']}\n")
+            env.write(f"OPT_TRANSITION={OPT['cut_settings']['transition_style']}\n")
+            env.write(f"OPT_ZOOM_INTENSITY={OPT['cut_settings']['zoom_intensity']}\n")
+            env.write(f"OPT_TEXT_DURATION={OPT['text_overlay']['duration_seconds']}\n")
+            env.write(f"OPT_FONT_SIZE={OPT['text_overlay']['font_size']}\n")
+            env.write(f"OPT_DANGER_ZONES={','.join(map(str, OPT['danger_zones']))}\n")
+          PYEOF
 
       - name: ⬇️ Download AUDIO artifact from Audio-generator-
         env:
@@ -66,6 +117,13 @@ jobs:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           AUDIO_ARTIFACT_ID: ${{ github.event.inputs.audio_artifact_id }}
           VIDEO_ARTIFACT_ID: ${{ github.event.inputs.video_artifact_id }}
+          OPT_VERSION: ${{ env.OPT_VERSION }}
+          OPT_MAX_SEGMENT: ${{ env.OPT_MAX_SEGMENT }}
+          OPT_TRANSITION: ${{ env.OPT_TRANSITION }}
+          OPT_ZOOM_INTENSITY: ${{ env.OPT_ZOOM_INTENSITY }}
+          OPT_TEXT_DURATION: ${{ env.OPT_TEXT_DURATION }}
+          OPT_FONT_SIZE: ${{ env.OPT_FONT_SIZE }}
+          OPT_DANGER_ZONES: ${{ env.OPT_DANGER_ZONES }}
         run: python edit_video.py
 
       - name: ✅ Verify output
@@ -94,5 +152,6 @@ jobs:
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| Audio ID | ${{ github.event.inputs.audio_artifact_id }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Video ID | ${{ github.event.inputs.video_artifact_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Config | ${{ env.OPT_VERSION }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Output | final_video.mp4 |" >> $GITHUB_STEP_SUMMARY
           echo "⬇️ Download from **Artifacts** above." >> $GITHUB_STEP_SUMMARY
