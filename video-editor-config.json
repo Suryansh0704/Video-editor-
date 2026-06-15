@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "cut_settings": {
+    "max_segment_duration": 3.0,
+    "transition_style": "cut",
+    "zoom_on_impact": true,
+    "zoom_intensity": 1.15
+  },
+  "text_overlay": {
+    "duration_seconds": 3,
+    "highlight_keywords": [
+      "secret",
+      "why",
+      "you",
+      "never",
+      "always",
+      "truth",
+      "dark",
+      "hidden"
+    ],
+    "font_size": 48,
+    "font_color": "white",
+    "stroke_color": "black",
+    "stroke_width": 3
+  },
+  "danger_zones": [
+    {
+      "start_seconds": 15,
+      "end_seconds": 18,
+      "effect": "red_flash"
+    },
+    {
+      "start_seconds": 30,
+      "end_seconds": 33,
+      "effect": "shake"
+    }
+  ],
+  "danger_zone_effects": {
+    "red_flash": {
+      "color_shift": "red"
+    },
+    "shake": {
+      "intensity": 5
+    }
+  }
+}
