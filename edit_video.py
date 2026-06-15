@@ -1,15 +1,17 @@
 """
-edit_video.py — Video Editor
-==============================
+edit_video.py — Video Editor (Config-Aware)
+==========================================
 Downloads SPECIFIC audio + video artifacts by ID.
+Reads optimization-config.json for dynamic editing parameters.
 No more stale artifact problem — always edits the current run.
 
 Edits:
   - Merges audio + video
-  - Color grade (brightness, contrast, saturation)
+  - Color grade (brightness, contrast, saturation) — from config
   - Warm tone curve
   - Vignette
-  - Fade in / fade out
+  - Fade in / fade out — from config
+  - Zoom on impact — from config
   - Re-encodes to YouTube/Instagram spec
 
 Output: final_video.mp4
@@ -22,10 +24,58 @@ import shutil
 import zipfile
 import subprocess
 import requests
+import json
 from pathlib import Path
 
 # ══════════════════════════════════════════════════════════════
-#  CONFIG
+#  CONFIG READER (Add this at the TOP of your main file)
+# ══════════════════════════════════════════════════════════════
+
+OPT = {}
+try:
+    OPT = json.loads(Path("optimization-config.json").read_text())
+    print(f"🧬 Using Gen {OPT.get('version', 'unknown')}")
+except Exception as e:
+    print("⚠️ Using defaults — optimization-config.json not found or invalid")
+    OPT = {}
+
+# ══════════════════════════════════════════════════════════════
+#  DYNAMIC SETTINGS (from config with safe fallbacks)
+# ══════════════════════════════════════════════════════════════
+
+# Video edit settings — pulled from config, clamped to safe ranges
+BRIGHTNESS         = max(-0.1, min(0.15, OPT.get("visual_settings", {}).get("brightness", 0.04)))
+CONTRAST           = max(0.8, min(1.5, OPT.get("visual_settings", {}).get("contrast", 1.10)))
+SATURATION         = max(0.5, min(2.0, OPT.get("visual_settings", {}).get("saturation", 1.25)))
+GAMMA              = max(0.8, min(1.3, OPT.get("visual_settings", {}).get("gamma", 1.05)))
+
+# Fade settings
+FADE_IN            = max(0.1, min(1.0, OPT.get("visual_settings", {}).get("fade_in_seconds", 0.4)))
+FADE_OUT           = max(0.1, min(1.5, OPT.get("visual_settings", {}).get("fade_out_seconds", 0.5)))
+
+# Zoom on impact (from video-editor-config)
+ZOOM_ENABLED       = OPT.get("cut_settings", {}).get("zoom_on_impact", True)
+ZOOM_INTENSITY     = max(1.0, min(1.3, OPT.get("cut_settings", {}).get("zoom_intensity", 1.15)))
+
+# Danger zone effects (from video-editor-config)
+DANGER_ZONES       = OPT.get("danger_zones", [])
+DANGER_EFFECTS     = OPT.get("danger_zone_effects", {})
+
+# Text overlay settings
+TEXT_ENABLED       = OPT.get("text_overlay", {}).get("enabled", True)
+HIGHLIGHT_WORDS    = OPT.get("text_overlay", {}).get("highlight_keywords", 
+                      ["secret", "why", "you", "never", "always", "truth", "dark", "hidden"])
+FONT_SIZE          = OPT.get("text_overlay", {}).get("font_size", 48)
+FONT_COLOR         = OPT.get("text_overlay", {}).get("font_color", "white")
+STROKE_COLOR       = OPT.get("text_overlay", {}).get("stroke_color", "black")
+STROKE_WIDTH       = OPT.get("text_overlay", {}).get("stroke_width", 3)
+
+# Cut settings
+MAX_SEGMENT        = OPT.get("cut_settings", {}).get("max_segment_duration", 3.0)
+TRANSITION_STYLE   = OPT.get("cut_settings", {}).get("transition_style", "cut")
+
+# ══════════════════════════════════════════════════════════════
+#  PATHS & ENV
 # ══════════════════════════════════════════════════════════════
 
 INPUT_AUDIO        = Path("output_voice.wav")
@@ -38,14 +88,6 @@ VIDEO_ARTIFACT_ID  = os.environ.get("VIDEO_ARTIFACT_ID", "")
 
 AUDIO_REPO         = "Suryansh0704/Audio-generator-"
 VIDEO_REPO         = "Suryansh0704/Video-generator-"
-
-# Edit settings
-BRIGHTNESS         = 0.04
-CONTRAST           = 1.10
-SATURATION         = 1.25
-GAMMA              = 1.05
-FADE_IN            = 0.4
-FADE_OUT           = 0.5
 
 GH_HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
@@ -150,22 +192,14 @@ def get_duration(path: str) -> float:
 
 
 # ══════════════════════════════════════════════════════════════
-#  EDIT PIPELINE
+#  EDIT PIPELINE (Config-Aware)
 # ══════════════════════════════════════════════════════════════
 
-def run_edit(duration: float) -> None:
-    """
-    Single ffmpeg pass:
-    1. Merge audio (WAV) + video (MP4, no audio track)
-    2. Color grade
-    3. Warm tone curve
-    4. Fade in / fade out
-    5. Trim to exact audio length
-    6. Encode to YouTube/Instagram spec
-    """
+def build_video_filter(duration: float) -> str:
+    """Build ffmpeg video filter chain from config settings."""
     fade_out_start = max(0, duration - FADE_OUT)
-
-    video_filter = ",".join([
+    
+    filters = [
         # Color grade
         f"eq=brightness={BRIGHTNESS}:contrast={CONTRAST}:"
         f"saturation={SATURATION}:gamma={GAMMA}",
@@ -177,7 +211,52 @@ def run_edit(duration: float) -> None:
         f"fade=t=in:st=0:d={FADE_IN}",
         # Fade out
         f"fade=t=out:st={fade_out_start:.3f}:d={FADE_OUT}",
-    ])
+    ]
+    
+    # Zoom on impact (subtle zoom pulse at key moments)
+    if ZOOM_ENABLED:
+        # Add zoom at 3s, 8s, 13s (typical hook/impact points)
+        zoom_points = [3, 8, 13]
+        for zp in zoom_points:
+            if zp < duration - 2:
+                filters.append(
+                    f"zoompan=z='if(between(in\\,{zp*30}\\,{(zp+1)*30})"
+                    f",{ZOOM_INTENSITY},1)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                )
+    
+    # Danger zone effects (red flash, shake, etc.)
+    for zone in DANGER_ZONES:
+        start = zone.get("start_seconds", 0)
+        end = zone.get("end_seconds", 0)
+        effect = zone.get("effect", "none")
+        
+        if effect == "red_flash" and end > start:
+            filters.append(
+                f"colorchannelmixer=rr=1.5:gg=0.5:bb=0.5:"
+                f"enable='between(t\\,{start}\\,{end})'"
+            )
+        elif effect == "shake" and end > start:
+            filters.append(
+                f"geq=lum='p(X+sin(T*20)*5,Y)':"
+                f"enable='between(t\\,{start}\\,{end})'"
+            )
+    
+    return ",".join(filters)
+
+
+def run_edit(duration: float) -> None:
+    """
+    Single ffmpeg pass:
+    1. Merge audio (WAV) + video (MP4, no audio track)
+    2. Color grade (from config)
+    3. Warm tone curve
+    4. Fade in / fade out (from config)
+    5. Zoom on impact (from config)
+    6. Danger zone effects (from config)
+    7. Trim to exact audio length
+    8. Encode to YouTube/Instagram spec
+    """
+    video_filter = build_video_filter(duration)
 
     cmd = [
         "ffmpeg", "-y",
@@ -204,10 +283,12 @@ def run_edit(duration: float) -> None:
         str(OUTPUT_VIDEO)
     ]
 
-    print("[EDIT] Running edit pipeline...")
-    print(f"       Color: brightness={BRIGHTNESS} contrast={CONTRAST} "
-          f"saturation={SATURATION}")
+    print("[EDIT] Running config-aware edit pipeline...")
+    print(f"       Config: Gen {OPT.get('version', 'default')}")
+    print(f"       Color: brightness={BRIGHTNESS} contrast={CONTRAST} saturation={SATURATION}")
     print(f"       Fades: in={FADE_IN}s out={FADE_OUT}s")
+    print(f"       Zoom: enabled={ZOOM_ENABLED} intensity={ZOOM_INTENSITY}")
+    print(f"       Danger zones: {len(DANGER_ZONES)} configured")
     print(f"       Duration: {duration:.2f}s")
 
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -226,7 +307,8 @@ def run_edit(duration: float) -> None:
 
 def main():
     print("=" * 62)
-    print("  Video Editor — Specific Artifact Mode")
+    print("  Video Editor — Config-Aware Mode")
+    print(f"  Config: Gen {OPT.get('version', 'default')}")
     print(f"  Audio ID: {AUDIO_ARTIFACT_ID}")
     print(f"  Video ID: {VIDEO_ARTIFACT_ID}")
     print("=" * 62)
@@ -242,7 +324,7 @@ def main():
     duration = get_duration(str(INPUT_AUDIO))
 
     # Run edit
-    print("\n[STEP 3] Editing...")
+    print("\n[STEP 3] Editing with config settings...")
     run_edit(duration)
 
     print("\n" + "=" * 62)
@@ -252,3 +334,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
