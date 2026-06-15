@@ -1,20 +1,21 @@
 """
-edit_video.py — Video Editor (Config-Aware)
-==========================================
+edit_video.py — Video Editor (Config-Aware, Shorts-Optimized)
+=============================================================
 Downloads SPECIFIC audio + video artifacts by ID.
 Reads optimization-config.json for dynamic editing parameters.
-No more stale artifact problem — always edits the current run.
+FORCES 9:16 VERTICAL output for YouTube Shorts.
 
 Edits:
+  - Forces 1080x1920 vertical (9:16)
   - Merges audio + video
   - Color grade (brightness, contrast, saturation) — from config
   - Warm tone curve
   - Vignette
   - Fade in / fade out — from config
   - Zoom on impact — from config
-  - Re-encodes to YouTube/Instagram spec
+  - Re-encodes to YouTube Shorts spec
 
-Output: final_video.mp4
+Output: final_video.mp4 (1080x1920, 9:16, 60fps)
 """
 
 import os
@@ -192,36 +193,42 @@ def get_duration(path: str) -> float:
 
 
 # ══════════════════════════════════════════════════════════════
-#  EDIT PIPELINE (Config-Aware)
+#  EDIT PIPELINE (Config-Aware + Shorts-Optimized)
 # ══════════════════════════════════════════════════════════════
 
 def build_video_filter(duration: float) -> str:
-    """Build ffmpeg video filter chain from config settings."""
+    """Build ffmpeg video filter chain — forces 9:16 vertical for Shorts."""
     fade_out_start = max(0, duration - FADE_OUT)
     
     filters = [
-        # Color grade
-        f"eq=brightness={BRIGHTNESS}:contrast={CONTRAST}:"
-        f"saturation={SATURATION}:gamma={GAMMA}",
-        # Warm tone (slight orange push)
+        # >>> STEP 1: FORCE VERTICAL 9:16 <<<
+        # Scale to 1080x1920, maintain aspect ratio, pad with black bars if needed
+        "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+        
+        # STEP 2: Color grade (from config)
+        f"eq=brightness={BRIGHTNESS}:contrast={CONTRAST}:saturation={SATURATION}:gamma={GAMMA}",
+        
+        # STEP 3: Warm tone curve
         "curves=r='0/0 0.5/0.55 1/1':g='0/0 0.5/0.50 1/1':b='0/0 0.5/0.45 1/0.95'",
-        # Vignette
+        
+        # STEP 4: Vignette
         "vignette=PI/4",
-        # Fade in
+        
+        # STEP 5: Fade in
         f"fade=t=in:st=0:d={FADE_IN}",
-        # Fade out
+        
+        # STEP 6: Fade out
         f"fade=t=out:st={fade_out_start:.3f}:d={FADE_OUT}",
     ]
     
-    # Zoom on impact (subtle zoom pulse at key moments)
+    # Zoom on impact (subtle zoom pulse at hook points)
     if ZOOM_ENABLED:
-        # Add zoom at 3s, 8s, 13s (typical hook/impact points)
-        zoom_points = [3, 8, 13]
+        zoom_points = [3, 8, 13]  # Typical hook/impact timestamps
         for zp in zoom_points:
             if zp < duration - 2:
                 filters.append(
-                    f"zoompan=z='if(between(in\\,{zp*30}\\,{(zp+1)*30})"
-                    f",{ZOOM_INTENSITY},1)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                    f"zoompan=z='if(between(in\\,{zp*30}\\,{(zp+1)*30}),{ZOOM_INTENSITY},1)'"
+                    f":d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
                 )
     
     # Danger zone effects (red flash, shake, etc.)
@@ -232,13 +239,11 @@ def build_video_filter(duration: float) -> str:
         
         if effect == "red_flash" and end > start:
             filters.append(
-                f"colorchannelmixer=rr=1.5:gg=0.5:bb=0.5:"
-                f"enable='between(t\\,{start}\\,{end})'"
+                f"colorchannelmixer=rr=1.5:gg=0.5:bb=0.5:enable='between(t\\,{start}\\,{end})'"
             )
         elif effect == "shake" and end > start:
             filters.append(
-                f"geq=lum='p(X+sin(T*20)*5,Y)':"
-                f"enable='between(t\\,{start}\\,{end})'"
+                f"geq=lum='p(X+sin(T*20)*5,Y)':enable='between(t\\,{start}\\,{end})'"
             )
     
     return ",".join(filters)
@@ -246,17 +251,30 @@ def build_video_filter(duration: float) -> str:
 
 def run_edit(duration: float) -> None:
     """
-    Single ffmpeg pass:
-    1. Merge audio (WAV) + video (MP4, no audio track)
-    2. Color grade (from config)
-    3. Warm tone curve
-    4. Fade in / fade out (from config)
-    5. Zoom on impact (from config)
-    6. Danger zone effects (from config)
-    7. Trim to exact audio length
-    8. Encode to YouTube/Instagram spec
+    Single ffmpeg pass for YouTube Shorts:
+    1. Scale to 1080x1920 (9:16 vertical)
+    2. Color grade
+    3. Warm tone + vignette + fades
+    4. Zoom on impact
+    5. Trim to exact audio length
+    6. Encode to Shorts spec
     """
     video_filter = build_video_filter(duration)
+
+    # Validate input dimensions
+    probe = subprocess.run([
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0",
+        str(INPUT_VIDEO)
+    ], capture_output=True, text=True)
+    
+    if probe.returncode == 0:
+        w, h = map(int, probe.stdout.strip().split(','))
+        print(f"[INPUT] Raw video: {w}x{h} ({'VERTICAL ✅' if h > w else 'HORIZONTAL ⚠️'})")
+        if w > h:
+            print("[FIX] Scaling + padding to 1080x1920 (9:16)")
 
     cmd = [
         "ffmpeg", "-y",
@@ -266,14 +284,19 @@ def run_edit(duration: float) -> None:
         "-map", "1:a:0",
         "-vf", video_filter,
         "-t", str(duration),
-        # Video — YouTube/Instagram spec
+        
+        # >>> VIDEO — YOUTUBE SHORTS SPEC <<<
         "-c:v", "libx264",
         "-preset", "fast",
-        "-crf", "18",
+        "-crf", "20",                   # Slightly higher for smaller file size
         "-profile:v", "high",
         "-level", "4.1",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
+        "-r", "60",                     # 60fps for smooth Shorts
+        "-aspect", "9:16",              # Explicit 9:16 aspect ratio
+        # Resolution is set in -vf filter (scale=1080:1920)
+        
         # Audio
         "-c:a", "aac",
         "-b:a", "192k",
@@ -283,19 +306,34 @@ def run_edit(duration: float) -> None:
         str(OUTPUT_VIDEO)
     ]
 
-    print("[EDIT] Running config-aware edit pipeline...")
+    print("[EDIT] Running Shorts edit pipeline...")
     print(f"       Config: Gen {OPT.get('version', 'default')}")
     print(f"       Color: brightness={BRIGHTNESS} contrast={CONTRAST} saturation={SATURATION}")
     print(f"       Fades: in={FADE_IN}s out={FADE_OUT}s")
     print(f"       Zoom: enabled={ZOOM_ENABLED} intensity={ZOOM_INTENSITY}")
-    print(f"       Danger zones: {len(DANGER_ZONES)} configured")
-    print(f"       Duration: {duration:.2f}s")
+    print(f"       Output: 1080x1920 | 9:16 | 60fps | {duration:.1f}s")
 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
         print(f"[ERROR] ffmpeg failed:\n{result.stderr[-600:]}")
         sys.exit(1)
+
+    # Verify output is actually vertical
+    out_probe = subprocess.run([
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0",
+        str(OUTPUT_VIDEO)
+    ], capture_output=True, text=True)
+    
+    if out_probe.returncode == 0:
+        ow, oh = map(int, out_probe.stdout.strip().split(','))
+        ratio = ow / oh
+        print(f"[OUTPUT] Final video: {ow}x{oh} (ratio: {ratio:.3f})")
+        if ratio > 0.6:
+            print("⚠️ WARNING: Output may not be 9:16! Check raw video source.")
 
     mb = OUTPUT_VIDEO.stat().st_size / (1024 * 1024)
     print(f"[✓] final_video.mp4 → {mb:.1f}MB")
@@ -307,7 +345,7 @@ def run_edit(duration: float) -> None:
 
 def main():
     print("=" * 62)
-    print("  Video Editor — Config-Aware Mode")
+    print("  Video Editor — Shorts Mode (1080x1920, 9:16)")
     print(f"  Config: Gen {OPT.get('version', 'default')}")
     print(f"  Audio ID: {AUDIO_ARTIFACT_ID}")
     print(f"  Video ID: {VIDEO_ARTIFACT_ID}")
@@ -324,14 +362,13 @@ def main():
     duration = get_duration(str(INPUT_AUDIO))
 
     # Run edit
-    print("\n[STEP 3] Editing with config settings...")
+    print("\n[STEP 3] Editing for Shorts (9:16)...")
     run_edit(duration)
 
     print("\n" + "=" * 62)
-    print("  [✓] DONE — final_video.mp4 ready")
+    print("  [✓] DONE — final_video.mp4 ready (1080x1920)")
     print("=" * 62)
 
 
 if __name__ == "__main__":
     main()
-
